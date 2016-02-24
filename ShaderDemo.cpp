@@ -1,6 +1,12 @@
-// ShaderDemo.cpp : This is it. You need these standard headers and GL.h
-// The (VS) project does not set the character type. (single byte chars)
-// Created by eiffie GPLv3
+// ShaderDemo.cpp : This is it. Created by eiffie GPLv3
+// What is it? Runs simple webgl scripts from ShaderToy under win 32 api.
+// Why? I wanted to run the games offline/native at fullscreen/speed.
+// Usage: Create a textfile in NOTEPAD and type [bufA] then newline. Copy in code for buffer A
+// type [image] on a line by itself then copy in the code from Image tab.
+// save the file and drag it to this program's icon. Buffer A=iChannel0 and keyboard=iChannel1
+// Press "escape" to quit and "backspace" to reset iFrame.
+// You need these standard headers and GL.h
+// The (VS) project should use single byte chars.
 #pragma comment( lib, "OpenGL32.lib" )
 #include <conio.h>
 #include <stdio.h>

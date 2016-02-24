@@ -1,5 +1,6 @@
 // ShaderDemo.cpp : This is it. You need these standard headers and GL.h
-// The project does not set the character type. (single byte chars)
+// The (VS) project does not set the character type. (single byte chars)
+// Created by eiffie GPLv3
 #pragma comment( lib, "OpenGL32.lib" )
 #include <conio.h>
 #include <stdio.h>

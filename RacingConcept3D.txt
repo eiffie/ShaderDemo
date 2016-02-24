@@ -1,0 +1,490 @@
+[bufA]
+//eiffie - This is almost intact from the original https://www.shadertoy.com/view/lsK3RK by Imp5
+//I changed the start/end positions to make it more challenging since driving "in car" is easier.
+
+// GLSL Racing Concept
+// Created by Alexey Borisov / 2016
+// License: GPLv2
+
+
+const float PI = 3.141592653;
+
+const float OFFSET = 0.1;
+
+const float KEY_A = 65.5 / 256.0;
+const float KEY_W = 87.5 / 256.0;
+const float KEY_S = 83.5 / 256.0;
+const float KEY_D = 68.5 / 256.0;
+const float KEY_R = 82.5 / 256.0;
+const float KEY_LEFT = 37.5 / 256.0;
+const float KEY_UP = 38.5 / 256.0;
+const float KEY_DOWN = 40.5 / 256.0;
+const float KEY_RIGHT = 39.5 / 256.0;
+
+const float LAPS = 5.0;
+
+const float IS_INITED = 0.5;
+const float CAR_POSE = 1.5;
+const float CAR_VEL = 2.5;
+const float DEBUG_DOT = 3.5;
+const float CAR_PROGRESS = 4.5;
+
+const float MAX_SPEED = 1.2;
+
+const float carLength = 0.045;
+const float carWidth = 0.02;
+
+float is_key_pressed(float key_code)
+{
+    return texture2D(iChannel1, vec2((key_code), 0.0)).x;
+}
+
+vec2 track_distort(vec2 pos)
+{
+    pos *= 0.5;    
+    pos -= vec2(cos(pos.y * 2.4), sin(pos.x * 2.0 - 0.3 * sin(pos.y * 4.0))) * 0.59;
+    return pos;
+}
+
+float track_val(vec2 pos)
+{
+    pos = track_distort(pos);
+    return abs(1.0 - length(pos)) * 8.0 - 1.0;
+}
+
+vec2 track_grad(vec2 pos)
+{
+    const float d = 0.01;
+    float v0 = track_val(pos);
+    return vec2(track_val(pos + vec2(d, 0)) - v0, track_val(pos + vec2(0, d)) - v0) / d;
+}
+
+vec2 get_point_on_track(vec2 pos)
+{
+    for (int i = 8; i >= 0; i--)
+        pos = pos - track_grad(pos) * float(i) * 0.001;
+    
+    return pos;
+}
+
+vec4 get_val(float variable, float index)
+{
+    return texture2D(iChannel0, vec2(variable + OFFSET, index) / iResolution.xy);
+}
+
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord )
+{
+    fragColor = vec4(0.45, 0.0, 0.0, 1.0);
+    vec4 debugDot = vec4(100.0, 100.0, 1.0, 1.0);
+        
+    if (fragCoord.y <= 8.0 && fragCoord.x <= 10.0)
+    {
+        float carIdx = fragCoord.y + OFFSET;
+        if (get_val(IS_INITED, carIdx).x < 0.99 || is_key_pressed(KEY_R) > 0.5) // not inited
+        {
+            if (fragCoord.x < ceil(IS_INITED))
+                fragColor = vec4(1, 0, 0, 1);
+            else if (fragCoord.x < ceil(CAR_POSE))
+            {
+			if(carIdx<0.75)carIdx+=8.0;
+                fragColor = vec4(1.2 + carIdx * 0.094 + (fract(carIdx * 0.5) - 0.2) * 0.2, 1.85 - carIdx * 0.074, -1.0, 0.8);
+                fragColor.zw = normalize(fragColor.zw);
+            }
+            else if (fragCoord.x < ceil(CAR_VEL))
+                fragColor = vec4(0.0, 0.0, 0.0, 0.0);
+            else if (fragCoord.x < ceil(DEBUG_DOT))
+                fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+            else
+                fragColor = vec4(0.0, 0.0, 0.0, 0.0);               
+        }
+        else // inited
+        {
+            vec4 carPose = get_val(CAR_POSE, carIdx);
+            vec2 carPos = carPose.xy;
+            vec2 prevPos = carPos;
+            vec2 carDir = carPose.zw;
+            vec2 carLeft = normalize(vec2(-carDir.y, carDir.x));
+            vec3 carVel3 = get_val(CAR_VEL, carIdx).xyz;
+            vec2 carVel = carVel3.xy;
+            float carOmega = carVel3.z;
+            vec4 carProgress = get_val(CAR_PROGRESS, carIdx);
+            
+            // Detect dt manually,
+            // this is workaround for iTimeDelta issue
+            float timeLoop = mod(iGlobalTime, 128.0);
+            float dt = clamp(timeLoop - carProgress.z, 0.01, 1.0 / 30.0);
+            carProgress.z = timeLoop;
+
+                        
+            float timeAfterFinish = min(carProgress.y, 1.0);//clamp(iGlobalTime - 3.0, 0.0, 1.0);
+            
+            if (carIdx <= 1.0 && timeAfterFinish <= 0.0)
+            {
+                carOmega *= 0.96 - (dt - 1.0 / 60.0) * 8.0;
+                
+                if (is_key_pressed(KEY_W) > 0.5 || is_key_pressed(KEY_UP) > 0.5)
+                    carVel += 1.0 * carDir * dt;
+                if (is_key_pressed(KEY_S) > 0.5 || is_key_pressed(KEY_DOWN) > 0.5)
+                    carVel -= 1.0 * carDir * dt;
+
+                //carSpeed = min(length(carVel), MAX_SPEED);
+                
+                if (is_key_pressed(KEY_A) > 0.5 || is_key_pressed(KEY_LEFT) > 0.5)
+                {
+                    carOmega += 1.2 * dt;
+                    carVel *= 0.999;
+                }
+                if (is_key_pressed(KEY_D) > 0.5 || is_key_pressed(KEY_RIGHT) > 0.5)
+                {
+                    carOmega -= 1.2 * dt;
+                    carVel *= 0.999;                
+                }
+            }
+            else
+            {                
+                carOmega *= 0.85 - (dt - 1.0 / 60.0) * 11.0;
+                
+                float accel = min(1.0, 0.9 +
+                	0.1 * sin(carIdx + iGlobalTime * (0.25 + carIdx * 0.2)) - (floor(carIdx / 2.0) - 0.85) * 0.13);
+
+                carVel += accel * carDir * dt;
+                
+                carVel *= clamp((5.0 - timeAfterFinish), 0.0, 1.0);
+                //carSpeed = length(carVel);
+                
+                float posOnTrack = sin((carIdx + 2.0) * iGlobalTime * 0.2 + carIdx) * 0.025 + 0.97;
+                                
+                vec2 wishPos = posOnTrack * get_point_on_track(carPos + normalize(carDir) * (0.2 + length(carVel) * 0.4));
+                //wishPos += vec2(0.0, 0.5) * timeAfterFinish;
+                vec2 wishDir = normalize(wishPos - carPos);
+                carOmega += 8.0 * dt * clamp(dot(wishDir, carLeft) * (5.0 - carIdx * 0.5), -1.0, 1.0) * min(carProgress.w - 0.8, 1.0);
+                    
+		       
+	         //   debugDot.xy = wishPos;
+            }
+            
+            if (carProgress.w < 1.0)
+            	carVel = vec2(0.0, 0.0);
+            
+            carOmega = clamp(carOmega, -1.0, 1.0);
+            carDir += carLeft * dt * min(length(carVel) * 4.0 * carOmega, 2.0);
+            carDir = normalize(carDir);
+                        
+            float wall =
+                max(track_val(carPos - carLeft * carWidth - carDir * carLength), 0.0) +
+                max(track_val(carPos - carLeft * carWidth + carDir * carLength), 0.0) +
+                max(track_val(carPos + carLeft * carWidth - carDir * carLength), 0.0) +
+                max(track_val(carPos + carLeft * carWidth + carDir * carLength), 0.0);
+
+            // collision with walls
+            if (timeAfterFinish < 0.001)
+            {
+            	if (wall > 0.0)
+            	{
+	                carVel *= 1.0 - 0.04 * min(wall * 10.0, 1.0);
+	            	carPos -= track_grad(carPos) * min(wall * 0.02, 0.02);
+	                vec2 grad = track_grad(carPos);
+	                vec2 gradLeft = normalize(vec2(-grad.y, grad.x));
+	                carDir = normalize(carDir + dot(gradLeft, carDir) * gradLeft * length(carVel) * dt * 5.0);
+	            }
+            }
+            else
+            {
+                carVel *= 1.0 - clamp((wall - 1.0) * 0.02, 0.0, 1.0);
+            }
+            
+            // collision with cars
+            {
+                for (int i = 0; i < 8; i++)
+                {
+                   	float secondIdx = float(i) + OFFSET;
+                    if (abs(secondIdx - carIdx) > 0.5)
+                    {
+                        vec4 secondPose = get_val(CAR_POSE, secondIdx);
+                        vec2 secondPos = secondPose.xy;
+                        vec2 secondDir = secondPose.wz;
+                        vec2 secondVel = get_val(CAR_VEL, secondIdx).xy;
+                        
+                        vec2 dir = normalize(carPos - secondPos);
+                        float cDist = (carLength - carWidth);
+                        float cWidth = carWidth * 2.1;
+                        float k = 0.0;
+                        k = max(k, (cWidth - length(carPos + cDist * carDir - secondPos - cDist * secondDir)) / cWidth);
+                        k = max(k, (cWidth - length(carPos - cDist * carDir - secondPos - cDist * secondDir)) / cWidth);
+                        k = max(k, (cWidth - length(carPos + cDist * carDir - secondPos + cDist * secondDir)) / cWidth);
+                        k = max(k, (cWidth - length(carPos - cDist * carDir - secondPos + cDist * secondDir)) / cWidth);
+                        k = max(k, (cWidth - length(carPos - cDist * carDir - secondPos)) / cWidth);
+                        k = max(k, (cWidth - length(carPos + cDist * carDir - secondPos)) / cWidth);
+
+                        carPos += dir * 0.02 * k;
+                        carVel += dir * 0.2 * k;
+                        carDir = normalize(carDir + secondDir * 0.1 * k);
+                    }
+                }
+            }
+            
+            // friction
+            {
+                float carSpeed = min(length(carVel), MAX_SPEED * 1.1);
+            	float fr = carSpeed / MAX_SPEED;
+            	carSpeed = max(carSpeed - dt * (0.1 + fr * fr * fr), 0.0);
+            	if (carSpeed > 0.00001)
+	            	carVel = carSpeed * normalize(carVel + carDir * dt * 4.0);
+            }
+                                
+
+            carPos += carVel * dt;
+            
+            //progress
+            {
+                vec2 trackPrev = prevPos;
+                vec2 trackCur = carPos;
+            	float prevAngle = atan(trackPrev.y, trackPrev.x);
+            	float angle = atan(trackCur.y, trackCur.x);
+            	float dAngle = angle - prevAngle;
+            	dAngle = abs(dAngle) > 1.0 ? 0.0 : dAngle;
+	                            
+	            carProgress.x += dAngle / (2.0 * PI);
+                
+                if (carProgress.x > LAPS)
+                    carProgress.y += dt;
+                
+                carProgress.w += dt * 0.3333;
+            }
+            
+                        
+            if (fragCoord.x < ceil(IS_INITED))
+                fragColor = vec4(1, 1, 1, 1);
+            else if (fragCoord.x < ceil(CAR_POSE))
+            {
+                fragColor.xy = carPos;
+                fragColor.zw = carDir;
+            }
+            else if (fragCoord.x < ceil(CAR_VEL))
+                fragColor = vec4(mix(carVel, carVel3.xy, 0.25), carOmega, 0.0);
+            else if (fragCoord.x < ceil(DEBUG_DOT))
+                fragColor = debugDot;
+            else if (fragCoord.x < ceil(CAR_PROGRESS))
+                fragColor = carProgress;
+        }
+    }
+    else
+        fragColor = vec4(0.0, 1.0, 0.0, 1.0);    
+}
+[image]
+//This is a 3d version (by eiffie) of Racing Concept originally found @https://www.shadertoy.com/view/lsK3RK by Imp5
+
+//The original header...
+// GLSL Racing Concept
+// Created by Alexey Borisov / 2016
+// License: GPLv2
+
+//eiffie - Tried to make it as fast as possible because the "AI" cars behave boringly at low fps
+//But there is a problem with the cars "sinking" into the road :( needs more ITERS
+
+//change this for speed/quality
+const int ITERS = 96;
+
+const float OFFSET = 0.1;
+const float IS_INITED = 0.5;
+const float CAR_POSE = 1.5;
+const float CAR_VEL = 2.5;
+const float DEBUG_DOT = 3.5;
+const float CAR_PROGRESS = 4.5;
+
+const float LAPS = 5.0;
+
+const float carLength = 0.045;
+const float carWidth = 0.02;
+const float carHeight = 0.02;
+
+const vec2 finishDir = vec2(1, 1.5);
+
+vec2 track_distort(vec2 pos)
+{
+    pos *= 0.5;    
+    pos -= vec2(cos(pos.y * 2.4), sin(pos.x * 2.0 - 0.3 * sin(pos.y * 4.0))) * 0.59;
+    return pos;
+}
+
+float track_val(vec2 pos)
+{
+    pos = track_distort(pos);
+    return abs(1.0 - length(pos)) * 8.0 - 1.0;
+}
+
+vec4 car_color_from_index(int i)
+{
+    return abs(vec4(cos(float(i) * 6.3) - 0.1, cos(float(i) * 82.0) - 0.1, cos(float(i) * 33.0) - 0.1, 1.0));
+}
+
+vec2 rotate(vec2 v, float angle) {return cos(angle)*v+sin(angle)*vec2(v.y,-v.x);}
+
+float DEC(in vec3 p){
+	p.z=-p.z;
+	p/=0.07;
+	p.y-=0.16;
+	float r=length(p.zy+vec2(0.0,0.73))-0.7;
+	p.z+=0.05;
+	float d=max(r,length(max(vec3(0.0),abs(p)-vec3(0.27*sqrt(abs(p.y))-0.02,0.26,0.35)))-0.14);
+	p.z=abs(p.z);
+	p.yz+=vec2(0.35,-0.26);
+	r=length(p.zy);
+	d=max(d,0.1-r);
+	p.x=abs(p.x)-0.25;
+	d=min(d,length(max(vec2(0.0),abs(vec2(r,p.x))-vec2(0.06,0.02)))-0.02);
+	return d*0.06;
+}
+void CarCol(in vec3 p, float od, inout vec3 col){
+	p.z=-p.z;
+	p/=0.07;
+	p.z+=0.05;
+	p.z=abs(p.z);
+	p.yz+=vec2(0.19,-0.26);
+	float r=length(p.zy);
+	if(r<0.09)col+=smoothstep(0.04,0.06,r);
+	else col*=(0.5+0.5*smoothstep(0.0,0.01,abs(p.y-0.24)-0.06));
+    p.x=abs(p.x)-0.2;
+    if(length(p.xy)<0.025)col.r+=1.0;
+}
+int id;
+vec3 scar;
+float DE(in vec3 z0){
+	vec2 p=z0.xz*8.0;
+	float g=-0.05+(sin(p.x+sin(p.y*1.7))+sin(p.y+sin(p.x*1.3)))*0.01;
+	float c=track_val(z0.xz);
+	float dg=(z0.y+g*smoothstep(0.0,3.0,c)) * 6.0;
+	float d=2.0;
+	scar=vec3(-1.0);//saved car position
+	for(int carIdx=1;carIdx<8;carIdx++){
+		vec4 carPose = texture2D(iChannel0, vec2(CAR_POSE, float(carIdx)+0.5) / iResolution.xy);
+		mat2 mx=mat2(carPose.w,carPose.z,-carPose.z,carPose.w);
+		vec3 v=z0-vec3(carPose.x,carHeight,carPose.y);
+		v.xz=mx*v.xz;
+		float d2=length(max(abs(v)-vec3(carWidth,carHeight,carLength),0.0));
+		if(d2<d){d=d2;scar=v;id=carIdx;}
+	}
+	if(d<0.025){//now find distance to the actual car model
+		d=DEC(scar);
+	} 
+	if(dg<d){id=0;d=dg;}
+	return d;
+}
+vec3 sky(vec3 rd){
+	return mix(vec3(0.5,0.4,0.3),vec3(0.4,0.5,0.7),0.5+rd.y+cos(rd.x*3.14159)*0.5);
+}
+// Simple 2d noise algorithm contributed by Trisomie21 (Thanks!)
+float noise2D( vec2 p ) {
+	vec2 f = fract(p);
+	p = floor(p);
+	float v = p.x+p.y*1000.0;
+	vec4 r = vec4(v, v+1.0, v+1000.0, v+1001.0);
+	r = fract(100000.0*sin(r*.001));
+	f = f*f*(3.0-2.0*f);
+	return 2.0*(mix(mix(r.x, r.y, f.x), mix(r.z, r.w, f.x), f.y))-1.0;
+}
+
+vec4 scene(vec3 ro, vec3 rd){
+	float t=0.0,d,od=1.0;
+	for(int i=0;i<ITERS;i++){
+		t+=d=DE(ro+rd*t);
+		if(d<0.0001 || t>3.0)break;
+		od=d;
+	}
+	t=min(t,3.0);
+	vec3 col=sky(rd);
+	if(d<0.1){
+		float dif=1.0-clamp(d/od,0.0,0.8);
+		vec3 so=ro+rd*t;
+		vec3 scol=vec3(0.0);
+		if(id==0){
+			float c=track_val(so.xz);
+			vec3 grnd=vec3(0.3+10.0*so.y,1.0,0.7-12.0*so.y)+noise2D(so.xz*40.0)*0.2;
+			if(rd.y<0.0){
+				float tmax=-ro.y/rd.y;
+				so.xz=ro.xz+rd.xz*tmax;
+			}
+			vec3 trk=vec3(0.4+noise2D(so.xz*250.0)*0.1);
+			trk = mix(trk, vec3(1.0), clamp(dot(normalize(finishDir), normalize(so.xz)) * 10000.0 - 9999.0, 0.0, 1.0));
+			scol=mix(trk,grnd,clamp(c*20.0,0.0,1.0));
+			d=DEC(scar);
+			scol*=clamp(0.3+d*100.0,0.0,1.0);
+		}else{
+			scol=car_color_from_index(id).rgb;
+			CarCol(scar,d,scol);
+		}
+		scol*=dif;
+		col=mix(scol,col,t/3.0);
+	}
+	return vec4(col*1.5,1.0);
+}
+
+mat3 lookat(vec3 fw){
+	fw=normalize(fw);vec3 rt=normalize(cross(fw,vec3(0.0,1.0,0.0)));return mat3(rt,cross(rt,fw),fw);
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{   
+    
+	vec4 carPose=texture2D(iChannel0, vec2(CAR_POSE, 0) / iResolution.xy);
+	vec3 ro=vec3(carPose.x,carHeight*1.1,carPose.y);
+	vec3 rd=vec3((fragCoord-0.5*iResolution.xy)/iResolution.x,1.0);rd.x=-rd.x;
+	rd=lookat(vec3(carPose.z,-0.002,carPose.w))*normalize(rd);
+	vec4 color = scene(ro,rd);
+    
+    if (fragCoord.y < iResolution.y * 0.08)
+    {            
+        vec2 uv = fragCoord.xy / iResolution.xx;
+        
+        color = mix(color, vec4(0.0, 0.0, 0.0, 1.0),
+                    clamp(1.0 - max(abs(uv.y - 0.02) * 200.0, abs(uv.x - 0.5) * 210.0 - 100.0), 0.0, 1.0));
+        
+        for (int i = 0; i < 8; i++)
+        {
+            float carIdx = float(i) + OFFSET;
+            vec4 carProgress = texture2D(iChannel0, vec2(CAR_PROGRESS, carIdx) / iResolution.xy);
+            vec2 pos = vec2(0.02 + clamp(carProgress.x / LAPS, 0.0, 1.0) * 0.96, 0.02);
+            vec4 carColor = car_color_from_index(i);
+
+            float rad = (i == 0) ? 80.0 : 150.0;
+            
+            float k = clamp(4.0 - length((uv - pos) * rad) * 3.0, 0.0, 1.0);
+            color = mix(color, vec4(0.0, 0.0, 0.0, 1.0), k);
+            k = clamp(4.0 - length((uv - pos) * rad * 1.15) * 3.0, 0.0, 1.0);
+            color = mix(color, carColor, k);
+
+        }
+    }
+
+    // start lights
+    {
+    	vec4 carProgress = texture2D(iChannel0, vec2(CAR_PROGRESS, 0) / iResolution.xy);
+        if (carProgress.w < 1.4)
+        {
+        	vec2 uv = (iResolution.xy - fragCoord.xy) / iResolution.xx;
+            
+            for (int i = 0; i < 3; i++)
+            {            
+                vec4 lightColor = carProgress.w >= 1.0 ? vec4(0.0, 1.0, 0.0, 1.0) :
+                	vec4(carProgress.w > float(i + 1) / 3.0 ? 1.0 : 0.0, 0.0, 0.0, 1.0);
+                vec2 pos = vec2(0.5 - float(i - 1) * 0.1, 0.1);
+                float rad = 25.0;
+                float k = clamp(17.0 - length((uv - pos) * rad) * 16.0, 0.0, 1.0);
+                color = mix(color, vec4(0.0, 0.0, 0.0, 1.0), k);
+                k = clamp(17.0 - length((uv - pos) * rad * 1.15) * 16.0, 0.0, 1.0);
+                color = mix(color, lightColor, k);
+            }
+        }
+    }
+     vec4 carProgress = texture2D(iChannel0, vec2(CAR_PROGRESS, 0.5) / iResolution.xy);
+	if(carProgress.y>0.0){
+		vec2 uv = 5.0*fragCoord.xy / iResolution.xx;
+		vec2 h=sin(2.0*vec2(uv.x,uv.x+uv.y)+iGlobalTime);
+		uv+=h*0.1;
+		vec2 p=fract(uv)-vec2(0.5);
+		vec3 chk=mix(vec3(0.25),vec3(1.0),smoothstep(0.0,0.01,sign(p.x*p.y)*min(abs(p.x),abs(p.y))));
+		color.rgb=mix(chk,color.rgb,0.8+0.2*(h.x+h.y));
+    	}
+	fragColor = color; //vec4(0, is_key_pressed(KEY_A), 0, 1);
+}

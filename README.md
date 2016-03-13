@@ -1,8 +1,10 @@
 # ShaderDemo
 Runs simple ShaderToy games/demos that use buffer A &amp; keyboard.
-This was just a quick project to run webgl games offline, fullscreen under Windows (32 bit api).
+This was just a quick project to run webgl games offline and fullscreen.
+There are two seperate versions for Windows (32 bit api) and Linux (ShaderDemoX).
 It accepts a file on the command line with the following format...
-Start the file in NOTEPAD! by typing
+Start the file in NOTEPAD for Windows or gedit for Linux (line endings must be correct)!
+Type
 [bufA]
 Start a new line after the ] and paste in the code from Buffer A.
 Then type

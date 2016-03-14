@@ -114,7 +114,7 @@ bool loadShaders(char *fname){
 	return (image[0]!=0);
 }
 typedef void (__stdcall * PFNGLACTIVETEXTUREPROC) (GLenum texunit);
-typedef void (__stdcall * PFNGLTEXIMAGE3DEXTPROC) (GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels);
+//typedef void (__stdcall * PFNGLTEXIMAGE3DEXTPROC) (GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels);
 typedef void (__stdcall * PFNGLATTACHSHADERPROC) (GLuint program, GLuint shader);
 typedef void (__stdcall * PFNGLCOMPILESHADERPROC) (GLuint shader);
 typedef GLuint (__stdcall * PFNGLCREATEPROGRAMPROC) (void);
@@ -148,10 +148,10 @@ typedef GLenum (__stdcall * PFNGLCHECKFRAMEBUFFERSTATUSPROC) (GLenum target);
 #define GL_COLOR_ATTACHMENT0 0x8CE0
 #define GL_FRAMEBUFFER_COMPLETE 0x8CD5
 #define GL_RGBA32F 0x8814
-#define GL_RGB32F 0x8815
+//#define GL_RGB32F 0x8815
 
 PFNGLACTIVETEXTUREPROC glActiveTexture=NULL;
-PFNGLTEXIMAGE3DEXTPROC glTexImage3D=NULL;
+//PFNGLTEXIMAGE3DEXTPROC glTexImage3D=NULL;
 PFNGLDELETESHADERPROC glDeleteShader=NULL; 
 PFNGLDELETEPROGRAMPROC glDeleteProgram=NULL; 
 PFNGLCREATESHADERPROC glCreateShader=NULL;
@@ -177,7 +177,7 @@ PFNGLCHECKFRAMEBUFFERSTATUSPROC glCheckFramebufferStatus=NULL;
 
 bool LoadShaderProcs(){//call after starting OpenGL
 	glActiveTexture=(PFNGLACTIVETEXTUREPROC)wglGetProcAddress((LPCSTR)"glActiveTexture");
-	glTexImage3D=(PFNGLTEXIMAGE3DEXTPROC)wglGetProcAddress((LPCSTR)"glTexImage3DEXT");
+	//glTexImage3D=(PFNGLTEXIMAGE3DEXTPROC)wglGetProcAddress((LPCSTR)"glTexImage3DEXT");
 	glDeleteShader=(PFNGLDELETESHADERPROC)wglGetProcAddress((LPCSTR)"glDeleteShader"); 
 	glDeleteProgram=(PFNGLDELETEPROGRAMPROC)wglGetProcAddress((LPCSTR)"glDeleteProgram"); 
 	glCreateShader=(PFNGLCREATESHADERPROC)wglGetProcAddress((LPCSTR)"glCreateShader");
@@ -276,15 +276,8 @@ BYTE bytKeys[256];
 int iMouse=0,iFrame=0;
 bool bQuit=false,bKeys=true;
 
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
-{
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam){
 	switch (message){
-	case WM_PAINT:{
-		PAINTSTRUCT ps;
-		BeginPaint(hWnd, &ps);
-		// TODO: Add any drawing code here...
-		EndPaint(hWnd, &ps);
-		break;}
 	case WM_KEYDOWN:
 		bKeys=true;
 		if(wParam<256)bytKeys[wParam]=255;
@@ -420,23 +413,31 @@ int _tmain(int argc, _TCHAR* argv[])
 		GLuint P_S, VS_S, FS_S;//create the program and shaders
 		sprintf(FSscript,fssh,sound);
 		if(createprogram(VSscript, FSscript, P_S, VS_S, FS_S)){
-			glBindFramebuffer(GL_FRAMEBUFFER, 0); 
+			glBindFramebuffer(GL_FRAMEBUFFER, fbo[1]); 
 			glUseProgram(P_S);
 			GLint zUniS=glGetUniformLocation(P_S,"Zuni");//get uniform location
 			#define SAMPLE_RATE 22050
-			int bufSamps=width*height;
-			wdf=createWave(SAMPLE_RATE, 2, 16, bufSamps*2*2*2);//2 chan, 2 bytes per samp, 2 samps per pixel
+			int bufSamps=width*height*4;//2 channels x 2 samps per pixel
+			wdf=createWave(SAMPLE_RATE, 2, 16, bufSamps*sizeof(short));
 			if(wdf){
-				float u[2];u[0]=(float)width;u[1]=(float)SAMPLE_RATE;//sample rate
-				glUniform1fv(zUniS,2,u);
-				glRects(-1,-1,1,1);
-				glReadPixels(0,0,width,height,GL_RGBA,GL_SHORT,(void *)wdf->data);
+				float *dat=(float *)malloc(sizeof(float)*bufSamps);
+				if(dat){
+					float u[2];u[0]=(float)width;u[1]=(float)SAMPLE_RATE;//sample rate
+					glUniform1fv(zUniS,2,u);
+					glRects(-1,-1,1,1);
+					glReadPixels(0,0,width,height,GL_RGBA,GL_FLOAT,(void *)dat);
+					for(int i=0;i<bufSamps;i++){
+						float f=dat[i]*32766.0f;
+						wdf->data[i]=(short)(f+sgn(f)*0.5f);
+					}
+					free(dat);
+				}
 			}
 			glDetachShader(P_S,FS_S);glDeleteShader(FS_S);
 			glDetachShader(P_S,VS_S);glDeleteShader(VS_S);
 			glDeleteProgram(P_S);
 		}
-		if(wdf)PlayWave(wdf);
+		if(wdf)PlayWave(wdf);//could be garbage in no dat!
 	}
 #endif
 	free(FSscript);free(bufferA);free(image);free(sound);

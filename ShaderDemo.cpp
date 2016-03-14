@@ -1,11 +1,12 @@
 // ShaderDemo.cpp : This is it. Created by eiffie GPLv3
 // What is it? Runs simple webgl scripts from ShaderToy under win 32 api.
 // Why? I wanted to run the games offline/native at fullscreen/speed.
-// Usage: Create a textfile in NOTEPAD and type [bufA] then newline. Copy in code for buffer A
+// Usage: Create a textfile and type [bufA] then newline. Copy in code for buffer A
 // type [image] on a line by itself then copy in the code from Image tab.
-// save the file and drag it to this program's icon. Buffer A=iChannel0 and keyboard=iChannel1
+// Optionally add a line for [sound] and add the code from the Sound tab.
+// Save the file and drag it to this program's icon. Buffer A=iChannel0 and keyboard=iChannel1
 // Press "escape" to quit and "backspace" to reset iFrame.
-// You need these standard headers and GL.h
+// You need these standard headers and GL.h (I seem to have an old version!)
 // The (VS) project should use single byte chars.
 #pragma comment( lib, "OpenGL32.lib" )
 #include <conio.h>
@@ -24,7 +25,45 @@
 #pragma warning(disable: 4800) // forcing to bool
 #pragma warning(disable: 4312) // casting to greater size
 
-char *bufferA=NULL,*image=NULL;
+#define ADD_SOUND
+#ifdef ADD_SOUND 
+#pragma comment( lib, "WinMM.lib" ) //for PlaySound
+//WAVE FILE FUNCTIONS
+typedef struct tWAVEDATAFORMAT //this is the format of a .wav file that can be created and played in mem
+{
+	DWORD		dwRIFF,dwLen,dwWAVE,dwfmt,dwFmtLen;
+    WORD        wFormatTag,nChannels;          
+    DWORD       nSamplesPerSec,nAvgBytesPerSec;   
+    WORD        nBlockAlign,wBitsPerSample;  
+	DWORD		dwdata,dwDataLen;
+	short		data[1];
+} WAVEDATAFORMAT;
+//create a Wave file in memory with these attributes (you then fill in the data array)
+WAVEDATAFORMAT *createWave(int SampleRate, int Channels, int BitsPerSample, int Bytes){
+	WAVEDATAFORMAT *wff=(WAVEDATAFORMAT *)malloc(sizeof(WAVEDATAFORMAT)+Bytes);
+	if(wff){
+	wff->dwRIFF=MAKEFOURCC('R','I','F','F');
+	wff->dwLen=Bytes+36;
+	wff->dwWAVE=MAKEFOURCC('W','A','V','E');
+	wff->dwfmt=MAKEFOURCC('f','m','t',' ');
+	wff->dwFmtLen=16;
+	wff->wFormatTag=1;
+	wff->nChannels=Channels;
+	wff->nSamplesPerSec=SampleRate;
+	wff->nAvgBytesPerSec=SampleRate*Channels*BitsPerSample/8;
+	wff->nBlockAlign=Channels*BitsPerSample/8;
+	wff->wBitsPerSample=BitsPerSample;
+	wff->dwdata=MAKEFOURCC('d','a','t','a');
+	wff->dwDataLen=Bytes;}
+	return wff;//what is left is for you to fill in the wff->data and free this when done
+}
+void StopWave(){PlaySound(NULL,NULL,0);}//stops any playing wave files
+DWORD sndflags(bool loop){DWORD flg=SND_ASYNC;if(loop)flg=flg|SND_LOOP;return flg;}
+void PlayWave(WAVEDATAFORMAT *wdf){PlaySound((LPCSTR)(void *)wdf,NULL,sndflags(true) | SND_MEMORY);}
+float sgn(float t){return (t<0.0f?-1.0f:1.0f);}
+#endif
+
+char *bufferA=NULL,*image=NULL,*sound=NULL;
 char VSscript[]="void main() {gl_Position = gl_Vertex;}";
 char fsh[]="uniform sampler2D Zbuf,Ztex;\n\
 		   uniform float Zuni[16];\n\
@@ -48,17 +87,20 @@ bool loadShaders(char *fname){
 	fp = fopen (fname, "rb");
 	if (!fp) return false;
 	fgets (buff, sizeof (buff), fp); //Read whole line
-	if(strcmp(buff,"[bufA]\r\n")){fclose(fp);return false;}
+	if(memcmp(buff,"[bufA]",6)){fclose(fp);return false;}
 	bufferA=(char *)malloc(65536);
 	image=(char *)malloc(65536);
-	bufferA[0]=0;image[0]=0;
+	sound=(char *)malloc(65536);
+	bufferA[0]=0;image[0]=0;sound[0]=0;
 	txt=bufferA;
 	int i=0;
 	while (!feof(fp)){//load [bufA] and [image]
 		buf=fgets (buff, sizeof (buff), fp); //Read whole line
 		if(buf){
-			if(!strcmp(buff,"[image]\r\n")){
+			if(!memcmp(buff,"[image]",7)){
 				txt=image;i=0;
+			}else if(!memcmp(buff,"[sound]",7)){
+				txt=sound;i=0;
 			}else strcat(txt,buff);
 #ifdef _DEBUG
 			if(i==127-15){//put error line# here
@@ -69,7 +111,7 @@ bool loadShaders(char *fname){
 		}
 	}
 	fclose(fp);
-	return (txt==image);
+	return (image[0]!=0);
 }
 typedef void (__stdcall * PFNGLACTIVETEXTUREPROC) (GLenum texunit);
 typedef void (__stdcall * PFNGLTEXIMAGE3DEXTPROC) (GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels);
@@ -368,7 +410,36 @@ int _tmain(int argc, _TCHAR* argv[])
 	zUniI=glGetUniformLocation(P_I,"Zuni");
 	zBufI=glGetUniformLocation(P_I,"Zbuf");
 	zTexI=glGetUniformLocation(P_I,"Ztex");
-	free(FSscript);free(bufferA);free(image);
+#ifdef ADD_SOUND
+	WAVEDATAFORMAT *wdf=NULL;
+	if(sound[0]!=0){
+		char fssh[]="uniform float Zuni[2];\nvec2 mainSound(in float);\n\
+		   void main(){float t=floor(gl_FragCoord.y)*Zuni[0]+floor(gl_FragCoord.x);\n\
+		   vec2 v1=mainSound(t*2.0/Zuni[1]),v2=mainSound((t*2.0+1.0)/Zuni[1]);\n\
+		   gl_FragColor=clamp(vec4(v1,v2),-1.0,1.0);}\n%s";
+		GLuint P_S, VS_S, FS_S;//create the program and shaders
+		sprintf(FSscript,fssh,sound);
+		if(createprogram(VSscript, FSscript, P_S, VS_S, FS_S)){
+			glBindFramebuffer(GL_FRAMEBUFFER, 0); 
+			glUseProgram(P_S);
+			GLint zUniS=glGetUniformLocation(P_S,"Zuni");//get uniform location
+			#define SAMPLE_RATE 22050
+			int bufSamps=width*height;
+			wdf=createWave(SAMPLE_RATE, 2, 16, bufSamps*2*2*2);//2 chan, 2 bytes per samp, 2 samps per pixel
+			if(wdf){
+				float u[2];u[0]=(float)width;u[1]=(float)SAMPLE_RATE;//sample rate
+				glUniform1fv(zUniS,2,u);
+				glRects(-1,-1,1,1);
+				glReadPixels(0,0,width,height,GL_RGBA,GL_SHORT,(void *)wdf->data);
+			}
+			glDetachShader(P_S,FS_S);glDeleteShader(FS_S);
+			glDetachShader(P_S,VS_S);glDeleteShader(VS_S);
+			glDeleteProgram(P_S);
+		}
+		if(wdf)PlayWave(wdf);
+	}
+#endif
+	free(FSscript);free(bufferA);free(image);free(sound);
  
 	//now the demo loop
 #define ARRAY_SIZE 16
@@ -417,6 +488,9 @@ int _tmain(int argc, _TCHAR* argv[])
 	}
 
 	//clean this mess up
+#ifdef ADD_SOUND
+	if(wdf){StopWave();free(wdf);}
+#endif
 	glDetachShader(P_A,FS_A);glDeleteShader(FS_A);
 	glDetachShader(P_A,VS_A);glDeleteShader(VS_A);
 	glDeleteProgram(P_A);

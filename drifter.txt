@@ -1,0 +1,288 @@
+[bufA]
+#define HALF_FIELD vec2(20.0,15.0)
+#define RADIUS 1.0
+#define KEY_LEFT 37
+#define KEY_RIGHT 39
+#define KEY_SPACE 32
+#define KEY_R 82
+#define BULLET_SPEED 8.0
+#define TURN_SPEED 5.0
+#define BUG_SPEED 4.0
+#define PLAYER_SPEED 4.0
+#define RECOIL 0.5
+#define PI 3.14159
+
+bool KeyDown(in int key){
+	return (texture2D(iChannel1,vec2((float(key)+0.5)/256.0, 0.25)).x>0.0);
+}
+
+//https://www.shadertoy.com/view/4dsSzN funpatterns by cafe (editted by FabriceNeyret2)
+float rand (vec2 co){  return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453); }
+#define pix(U)  step(.5, rand(floor(U)))
+float hm(vec2 uv, float tim){
+    uv.y+=tim;
+    if(uv.y<25.0)return 0.0;
+    uv*=0.2;
+	vec2 nuv = 2.*fract(uv)-1.,
+	     pos = sign(nuv)*.9;
+	float d = max(max(abs(nuv.x),abs(nuv.y)),max(abs(nuv.x+nuv.y),abs(nuv.x-nuv.y))*0.707),	
+	      v = pix(uv);
+    if (d<1.) return v;
+	float v0 = v,
+          v1 = pix(uv+vec2(pos.x,0)),
+	      v2 = pix(uv+vec2(0,pos.y));
+	if (v1==v2)	v = v==pix(uv+pos) && v!=v1 ? 0. : v1;
+	return mix(v0, v, smoothstep(d,1.,1.001));
+}
+vec2 sgn(vec2 p){return vec2(p.x<0.?-1.:1.,p.y<0.?-1.:1.);}
+float sgn(float p){return (p<0.?-1.:1.);}
+float dot2(vec2 p){return dot(p,p);}
+vec2 cossin(float a){return vec2(cos(a),sin(a));}
+vec4 RandomSpacebug(vec2 p){
+	float r=fract(sin(iDate.w+dot(p,vec2(13.13,117.17)))*4321.123);
+	p=vec2(2.0*(r-0.5),sin(2.0+(r+r*r)*4321.123));
+	vec2 v=(abs(p.x)>abs(p.y)?vec2(sgn(p.x),p.y):vec2(p.x,sgn(p.y)));
+	return vec4(v*HALF_FIELD,normalize(p.yx+p.yy)*(p.x+p.y));
+}
+void mainImage(out vec4 O, in vec2 U){
+	if(U.y>1.0 || U.x>35.0)discard;
+	O=texture2D(iChannel0,U/iResolution.xy);
+	//game state0=player xy,vel
+	//state1=next bullet,next respawn,player angle,shot timer
+	vec4 st0=texture2D(iChannel0,vec2(32.5,0.5)/iResolution.xy);
+	vec4 st1=texture2D(iChannel0,vec2(33.5,0.5)/iResolution.xy);
+    vec4 st2=texture2D(iChannel0,vec2(34.5,0.5)/iResolution.xy);
+	
+	bool bSetup=(iFrame<5 || KeyDown(KEY_R));
+	if(U.x<16.0){//spacemen
+		if(bSetup){
+			O=RandomSpacebug(U);
+		}else{
+			if(O.x>-1000.0){//if alive
+                if(st0.x>-999.0)O.zw+=(st0.xy-O.xy)*iTimeDelta*st2.x*0.005/(1.0+dot2(st0.xy-O.xy));
+				O.xy+=O.zw*iTimeDelta*BUG_SPEED;
+				O.xy=mod(O.xy+HALF_FIELD,HALF_FIELD*2.0)-HALF_FIELD;
+				for(int i=0;i<16;i++){
+					vec2 p=texture2D(iChannel0,vec2(float(i)+16.5,0.5)/iResolution.xy).xy;
+					if(distance(p,O.xy)<RADIUS)O.x=-1000.0;//collision bullet/spacemen
+				}
+			}else{//respawn??
+				if(floor(st1.y)==floor(U.x))O=RandomSpacebug(U);
+			}
+		}
+	}else if(U.x<32.0){//bullets
+		if(bSetup){
+			O=vec4(-1000.0);//not shot
+		}else{
+			if(O.x>-1000.0){
+				O.xy+=O.zw*iTimeDelta*BULLET_SPEED;
+				vec2 p=abs(O.xy)-HALF_FIELD;
+				if(max(p.x,p.y)>0.0)O.x=-1000.0;//bullet dies offscreen
+			}else{//new shot
+				if(floor(st1.x)==floor(U.x-16.0) && st1.w>0.0){vec2 dr=cossin(st1.z);O=vec4(st0.xy+dr*0.5,dr);}
+			}
+		}
+	}else{//game state
+		if(bSetup){
+			st0=vec4(0.0);//position,velocity
+			st1=vec4(0.0);//next bullet,next respawn, angle, shot timer
+            st2=vec4(0.0);//game ticks
+		}else{
+			if(abs(st0.x)<999.0){
+				st0.xy+=st0.zw*iTimeDelta*PLAYER_SPEED;
+				st0.xy=mod(st0.xy+HALF_FIELD,HALF_FIELD*2.0)-HALF_FIELD;
+			}
+			if(KeyDown(KEY_RIGHT))st1.z-=iTimeDelta*TURN_SPEED;
+			if(KeyDown(KEY_LEFT))st1.z+=iTimeDelta*TURN_SPEED;
+			if(KeyDown(KEY_SPACE) && st1.w<=0.0){
+				st0.zw-=cossin(st1.z)*RECOIL;
+				st1.x=mod(st1.x+1.0,16.0);//bullet to shoot
+				st1.w=0.1;//shot timer
+			}
+			if(iMouse.z>0.0){
+                vec2 p=iMouse.xy/iResolution.xy-0.5;
+                p*=1.9*HALF_FIELD;
+				st1.z=atan(p.y-st0.y,p.x-st0.x);
+			}
+			st1.y=mod(st1.y+iTimeDelta,16.0);//respawn	
+			st1.w-=iTimeDelta;//shot timer
+            if(hm(st0.xy,st2.x)==1.)st0.x=-1000.0;
+            int j=0;
+			for(int i=0;i<16;i++){
+				vec2 p=texture2D(iChannel0,vec2(float(i),0.5)/iResolution.xy).xy;
+				if(distance(p,st0.xy)<RADIUS)st0.x=-1000.0;//collision drifter/spacemen
+                else if(p.x<-999.)j++;
+			}
+            if(j>14)st0.x=1000.0;
+            st2.x+=iTimeDelta;
+		}
+		O=(U.x<33.0?st0:U.x<34.0?st1:st2);
+	}	
+}
+[image]
+//Drifter by eiffie
+//like asteroids...https://www.shadertoy.com/view/4l2GzR & https://www.shadertoy.com/view/4llSD2
+//only your engine is dead and you're surrounded by aliens
+//mouse or arrow keys to aim, space to shoot, R to restart
+#define load(a) texture2D(iChannel0,(vec2(a,0.0)+0.5)/iResolution.xy)
+
+#define HALF_FIELD vec2(20.0,15.0)
+
+//https://www.shadertoy.com/view/4dsSzN funpatterns by cafe (editted by FabriceNeyret2)
+float rand (vec2 co){  return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453); }
+#define pix(U)  step(.5, rand(floor(U)))
+float hm(vec2 uv, float tim){
+    uv.y+=tim;
+    if(uv.y<25.0)return 0.0;
+    uv*=0.2;
+	vec2 nuv = 2.*fract(uv)-1.,
+	     pos = sign(nuv)*.9;
+	float d = max(max(abs(nuv.x),abs(nuv.y)),max(abs(nuv.x+nuv.y),abs(nuv.x-nuv.y))*0.707),	
+	      v = pix(uv);
+    if (d<1.) return v;
+	float v0 = v,
+          v1 = pix(uv+vec2(pos.x,0)),
+	      v2 = pix(uv+vec2(0,pos.y));
+	if (v1==v2)	v = v==pix(uv+pos) && v!=v1 ? 0. : v1;
+	return mix(v0, v, smoothstep(d,1.,1.001));
+}
+
+float Quadric(in vec2 p,in vec3 r){return (dot(p*r.xy,p)-r.z)/length(2.0*r.xy*p);}
+float Arc(in vec2 p, vec4 r) {float t=clamp(atan(p.y,p.x),r.z,r.w);return length(p-r.x*vec2(cos(t),sin(t)))-r.y;}
+float Tube(vec2 pa, vec2 ba, float r){return length(pa-ba*clamp(dot(pa,ba)/dot(ba,ba),0.0,1.0))-r;}
+vec2 rotate(vec2 v, float angle) {return cos(angle)*v+sin(angle)*vec2(v.y,-v.x);}
+vec2 cossin(float a){return vec2(cos(a),sin(a));}
+
+float DES(vec2 p){
+	float d=abs(Quadric(p,vec3(0.5,1.0,0.25)))-0.01;
+	d=min(d,Arc(p-vec2(0.0,0.75),vec4(1.0,0.01,-2.14,-1.05)));
+	vec2 ap=abs(p);
+	d=min(d,Tube(ap-vec2(0.22,0.47),vec2(0.11,0.25),0.01));
+	p.x=abs(p.x);
+	p-=vec2(0.22,0.47)+vec2(0.11,0.25)*1.33;
+	d=min(d,abs(length(p)-0.08)-0.01);
+	p.y+=1.54;
+	d=min(d,max(abs(p.x)-0.1,abs(p.y)-0.01));
+	return d;
+}
+float DEP(vec2 p){
+	p.y=abs(p.y);p.x-=0.5;
+	float d=Tube(p,vec2(-1.,0.5),0.01);
+	return d;
+}
+
+// Letter code (https://dl.dropboxusercontent.com/u/14645664/files/glsl-text.txt)
+const float lineWidth = 0.02,border = 0.05,scale = 0.15;
+float line(vec2 p, vec2 s, vec2 e) {s*=scale;e*=scale;float l=length(s-e);vec2 d=vec2(e-s)/l;p-=vec2(s.x,-s.y);p=vec2(p.x*d.x+p.y*-d.y,p.x*d.y+p.y*d.x);return length(max(abs(p-vec2(l/2.0,0))-vec2(l/2.0,lineWidth/2.0),0.0))-border;}
+float E(vec2 p){float d=line(p,vec2(5,1.5),vec2(1,1.5));d=min(d,line(p,vec2(1,1.5),vec2(1,5)));d=min(d,line(p,vec2(1,5),vec2(3,5)));d=min(d,line(p,vec2(3,5),vec2(1,5)));d=min(d,line(p,vec2(1,5),vec2(1,8)));d=min(d,line(p,vec2(1,8),vec2(5,8)));return d;}
+float L(vec2 p){float d=line(p,vec2(1,1.5),vec2(1,8));d=min(d,line(p,vec2(1,8),vec2(5,8)));return d;}
+float O(vec2 p){float d=line(p,vec2(5,1.5),vec2(1,1.5));d=min(d,line(p,vec2(1,1.5),vec2(1,8)));d=min(d,line(p,vec2(1,8),vec2(5,8)));d=min(d,line(p,vec2(5,8),vec2(5,1.5)));return d;}
+float R(vec2 p){float d=line(p,vec2(1,8),vec2(1,1.5));d=min(d,line(p,vec2(1,1.5),vec2(5,1.5)));d=min(d,line(p,vec2(5,1.5),vec2(5,5)));d=min(d,line(p,vec2(5,5),vec2(1,5)));d=min(d,line(p,vec2(1,5),vec2(3.5,5)));d=min(d,line(p,vec2(3.5,5),vec2(5,8)));return d;}
+float S(vec2 p){float d=line(p,vec2(5,1.5),vec2(1,1.5));d=min(d,line(p,vec2(1,1.5),vec2(1,5)));d=min(d,line(p,vec2(1,5),vec2(5,5)));d=min(d,line(p,vec2(5,5),vec2(5,8)));d=min(d,line(p,vec2(5,8),vec2(1,8)));return d;}
+float V(vec2 p){float d=line(p,vec2(1,1.5),vec2(3,8));d=min(d,line(p,vec2(3,8),vec2(5,1.5)));return d;}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord){
+	vec2 p=fragCoord/iResolution.xy;
+	vec4 st0=load(32);
+	vec4 st1=load(33);
+    vec4 st2=load(34);
+	float r=rand(p);
+	vec3 col=vec3(sin(fragCoord),0.75)*pow(r*0.99,40.0);
+	p-=0.5;p*=1.9*HALF_FIELD;
+    float d=hm(p,st2.x);
+    col=mix(col,vec3(0.5),d);
+	d=DEP(rotate(p-st0.xy,st1.z));
+	for(int i=0;i<16;i++){
+		vec2 s=load(i).xy;
+		d=min(d,DES(p-s));
+		s=load(i+16).xy;
+		d=min(d,length(p-s)-0.02);
+	}
+	if(abs(st0.x)>999.0){
+		p+=vec2(2.5,-0.5);
+		d=min(d,L(p));p.x-=1.0;
+		d=min(d,st0.x<0.0?O(p):E(p));p.x-=1.0;
+		d=min(d,st0.x<0.0?S(p):V(p));p.x-=1.0;
+		d=min(d,E(p));p.x-=1.0;
+		d=min(d,st0.x<0.0?R(p):L(p));p.x-=1.0;
+        if(st0.x>0.0){p.x=-(p.x-2.0);d=min(d,st0.x<1500.0?S(p):E(p));}
+	}
+	d=smoothstep(0.0,0.1,d);
+	col=mix(vec3(1.0),col,d);
+	fragColor=vec4(col,1.0);
+}
+[sound]
+#define bps 6.0
+float nofs(float n){//the song's "random" ring
+    n=mod(n,8.0);
+    if(n<1.0)return 5.0;
+    if(n<2.0)return 4.0;
+    if(n<3.0)return 2.0;
+    if(n<4.0)return 0.0;
+    if(n<5.0)return 4.0;
+    if(n<6.0)return 3.0;
+    if(n<7.0)return 2.0;
+    return 1.0;
+}
+
+float scale(float note){//throws out dissonant tones
+	float n2=mod(note,12.0);
+	if((n2==1.0)||(n2==3.0)||(n2==6.0)||(n2==8.0)||(n2==10.0))note=-100.0;//major
+	//if((n2==1.0)||(n2==4.0)||(n2==6.0)||(n2==9.0)||(n2==11.0))note=-100.0;//minor
+	//if((n2==1.0)||(n2==4.0)||(n2==5.0)||(n2==9.0)||(n2==10.0))note=-100.0;//hungarian minor
+	//if(note>96)note=96.0+n2;
+	return note;
+}
+
+#define TAU 6.283185
+#define wav cosine
+// note number to frequency  from https://www.shadertoy.com/view/ldfSW2
+float ntof(float n){return (n>0.0)?440.0 * pow(2.0, (n - 67.0) / 12.0):0.0;}
+//float spow(float x, float y){return sign(x)*pow(abs(x),y);}
+vec2 cosine(vec2 t){return cos(TAU*t);}
+vec2 sine(vec2 t){return sin(TAU*t);}
+vec2 saw(vec2 t){return 2.0*(fract(t)-0.5);}
+vec2 ssaw(vec2 t){return 4.0*(abs(fract(t)-0.5)-0.25);}
+vec2 squar(vec2 t){return sign(fract(t)-0.5);}
+float rand(float t){return fract(sin(mod(t,4321.123)*4321.123)*4321.123);}
+float noise(float t){float f=fract(t);t=floor(t);return mix(rand(t),rand(t+1.0),f);}
+float snoise(float t){float f=fract(t);t=floor(t);return mix(rand(t),rand(t+1.0),f*f*(3.0-2.0*f));}
+
+float I(float tf, float c, float s){// taken from jnorberg https://www.shadertoy.com/view/lt2GRy
+	float wf=c*24.0;//the number of harmonics to simulate
+	vec2 w=vec2(0.125,1.125)+vec2(floor(wf));w*=2.0;
+	float p=fract(tf),sw=1.0-2.0*p,ip=1.0-p;
+	vec2 sinc=-wav(w*p)/(1.0+s*p)+wav(w*ip)/(1.0+s*ip);
+	return (sw+mix(sinc.x,sinc.y,fract(wf)))*0.5;
+}
+vec2 inst(float n,float t,float bt,float pan,int i){
+	float f=ntof(scale(n)),c=1.0,s=0.9,fo=3.0,att=1000.0;
+	if(f<12.0)return vec2(0.0);
+	if(i==0)c=bt*0.2;
+	else if(i==1){c=0.3-bt*0.5;fo=0.5;}
+	else if(i==2){c=bt*0.1;s=0.3;fo=1.0;att=10.0;}
+	else if(i==3){c=bt*0.2;fo=4.0;}
+	else if(i==4){c=0.01;s=0.01;fo=0.125;}
+	else {c=1.0-bt;fo=6.0;}
+	float a=I(f*t,c,s);
+	a*=(1.0-exp(-bt*att))*exp(-bt*fo)*60.0/n;
+	return vec2(a*(1.0-pan),a*pan);
+}
+
+vec2 mainSound(float time)
+{
+	float tim=time*bps;
+	float b=floor(tim);tim+=0.1*snoise(time*2.0);
+	float t0=fract(tim),t1=mod(tim,2.0)*0.5,t2=mod(tim,4.0)*0.25;
+	float n2=nofs(b*0.0625)+nofs(b*0.125)+nofs(b*0.25);
+	float n1=n2+nofs(b*0.5),n0=n1+nofs(b);
+	
+	vec2 a0=inst(n0+72.0,time,t0,0.5,0);
+	vec2 a1=inst(n1+60.0,time,t1,0.8,1)*(0.6+0.2*snoise(time));
+	vec2 a2=inst(n2+36.0,time,t2,0.2,2);
+	vec2 a1h=inst(n1+21.0,time,t1,0.6,3);
+	vec2 a2h=inst(n2+43.0,time,t2,0.4,4);
+	vec2 a1hb=inst(n1+4.0,time,t1,0.1,5)*rand(time);
+	vec2 v=0.33*(a0+a1+a2+a1h+a2h+0.2*a1hb);
+	return clamp(v,-1.0,1.0);
+}

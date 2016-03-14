@@ -7,9 +7,10 @@
 // Buffer A=iChannel0 and keyboard=iChannel1
 // Press "escape" to quit and "backspace" to reset iFrame.
 // You need these standard headers plus a few gl and X11 headers 
-// to compile: gcc -o ShaderDemoX ShaderDemoX.c -lX11 -lXxf86vm -lGL
+// to compile: gcc -o ShaderDemoX ShaderDemoX.c -lX11 -lXxf86vm -lGL -lasound -pthread
 
 //lots of code taken from Mihael Vrbanec's nehe linux port. Thank you. It still works!
+//also ALSA code from Dr Matthias Nagorni
 
 #include <stdio.h>
 #include <stddef.h>
@@ -22,9 +23,77 @@
 #include <X11/extensions/xf86vmode.h>
 #include <X11/keysym.h>
 
+Bool bQuit=False; //stops vid & snd
+#define ADD_SOUND
+#ifdef ADD_SOUND 
+#include <pthread.h>
+#include <alsa/asoundlib.h>
+#define BUFSAMPS 2048
+int rate=44100, iSndFrames=0, iDatSamps;
+snd_pcm_t *pcm_handle;
+short *sndbuf,*snddat=NULL;
+
+snd_pcm_t *open_pcm(char *pcm_name) {
+    snd_pcm_t *playback_handle;
+    snd_pcm_hw_params_t *hw_params;
+    snd_pcm_sw_params_t *sw_params;
+    if (snd_pcm_open (&playback_handle, pcm_name, SND_PCM_STREAM_PLAYBACK, 0) < 0) {
+        fprintf (stderr, "cannot open audio device %s\n", pcm_name);
+		return NULL;//it seems greedy and wants exclusive control?!
+    }
+    snd_pcm_hw_params_alloca(&hw_params);
+    snd_pcm_hw_params_any(playback_handle, hw_params);
+    snd_pcm_hw_params_set_access(playback_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
+    snd_pcm_hw_params_set_format(playback_handle, hw_params, SND_PCM_FORMAT_S16_LE);
+    snd_pcm_hw_params_set_rate_near(playback_handle, hw_params, &rate, 0);
+    snd_pcm_hw_params_set_channels(playback_handle, hw_params, 2);
+    snd_pcm_hw_params_set_periods(playback_handle, hw_params, 2, 0);
+    snd_pcm_hw_params_set_period_size(playback_handle, hw_params, BUFSAMPS, 0);
+    snd_pcm_hw_params(playback_handle, hw_params);
+    snd_pcm_sw_params_alloca(&sw_params);
+    snd_pcm_sw_params_current(playback_handle, sw_params);
+    snd_pcm_sw_params_set_avail_min(playback_handle, sw_params, BUFSAMPS);
+    snd_pcm_sw_params(playback_handle, sw_params);
+    return(playback_handle);
+}
+
+int playback_callback (snd_pcm_sframes_t samps) {
+	int idx=samps*2*iSndFrames;//shorts
+	if(idx+samps*2>iDatSamps){iSndFrames=0;idx=0;}//2 chan 
+	memcpy(sndbuf,snddat+idx,samps*4);//2 chan x 2 bytes
+	iSndFrames++;
+    return snd_pcm_writei(pcm_handle, sndbuf, samps); 
+}
+
+void* startSnd(void *arg){
+	sndbuf = (short *) malloc (2 * sizeof (short) * BUFSAMPS); //each sample is 2 chans, 2 byte shorts
+	if(!sndbuf){free(snddat);return NULL;}
+	pcm_handle = open_pcm("hw:0,0");
+	if(!pcm_handle){free(sndbuf);free(snddat);return NULL;}
+	memset(sndbuf, 0, 2 * sizeof (short) * BUFSAMPS);
+	int nfds = snd_pcm_poll_descriptors_count (pcm_handle);
+	struct pollfd *pfds = (struct pollfd *)alloca(sizeof(struct pollfd) * nfds);
+	snd_pcm_poll_descriptors(pcm_handle, pfds, nfds);
+	while(!bQuit){
+		if (poll (pfds, nfds, 1000) > 0) {
+			int i;
+			for (i = 0; i < nfds; i++) {    
+				if (pfds[i].revents > 0) { //should check direction if writing too
+					if (playback_callback(BUFSAMPS) < BUFSAMPS) snd_pcm_prepare(pcm_handle);
+				}
+			} 
+		}
+	}
+	snd_pcm_close(pcm_handle);
+	free(sndbuf);free(snddat);
+	return NULL;
+}
+float sgn(float t){return (t<0.0f?-1.0f:1.0f);}
+#endif
+
 //#define _DEBUG
 
-char *bufferA=NULL,*image=NULL;
+char *bufferA=NULL,*image=NULL,*sound=NULL;
 char VSscript[]="void main() {gl_Position = gl_Vertex;}";
 char fsh[]="uniform sampler2D Zbuf,Ztex;\n\
 		   uniform float Zuni[16];\n\
@@ -48,22 +117,25 @@ Bool loadShaders(char *fname){
 	fp = fopen (fname, "rb");
 	if (!fp) return False;
 	fgets (buff, sizeof (buff), fp); //Read whole line
-	if(strcmp(buff,"[bufA]\n")){fclose(fp);return False;}
+	if(memcmp(buff,"[bufA]",6)){fclose(fp);return False;}
 	bufferA=(char *)malloc(65536);
 	image=(char *)malloc(65536);
-	bufferA[0]=0;image[0]=0;
+	sound=(char *)malloc(65536);
+	bufferA[0]=0;image[0]=0;sound[0]=0;
 	txt=bufferA;
 	int i=0;
 	while (!feof(fp)){//load [bufA] and [image]
 		buf=fgets (buff, sizeof (buff), fp); //Read whole line
 		if(buf){
-			if(!strcmp(buff,"[image]\n")){
+			if(!memcmp(buff,"[image]",7)){
 				txt=image;i=0;
+			}else if(!memcmp(buff,"[sound]",7)){
+				txt=sound;i=0;
 			}else strcat(txt,buff);
 		}
 	}
 	fclose(fp);
-	return (txt==image);
+	return (image[0]!=0);
 }
 //typedef void (__stdcall * PFNGLACTIVETEXTUREPROC) (GLenum texunit);
 //typedef void (__stdcall * PFNGLTEXIMAGE3DEXTPROC) (GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels);
@@ -296,7 +368,6 @@ int main(int argc, char **argv)
 	Window winDummy;
     unsigned int borderDummy,x,y,depth;
     XGetGeometry(dpy, win, &winDummy, &x, &y, &width, &height, &borderDummy, &depth); 
-printf("Actual size %i, %i\n",width, height); 
     if (!glXIsDirect(dpy, ctx)){printf("No Direct Rendering\n");return -1;}
 	
 	//get OpenGL2 procs & buffers
@@ -334,13 +405,49 @@ printf("Actual size %i, %i\n",width, height);
 	zUniI=glGetUniformLocation(P_I,"Zuni");
 	zBufI=glGetUniformLocation(P_I,"Zbuf");
 	zTexI=glGetUniformLocation(P_I,"Ztex");
-	free(FSscript);free(bufferA);free(image);
+#ifdef ADD_SOUND
+	pthread_t tid;
+	if(sound[0]!=0){
+		char fssh[]="uniform float Zuni[2];\nvec2 mainSound(in float);\n\
+		   void main(){float t=floor(gl_FragCoord.y)*Zuni[0]+floor(gl_FragCoord.x);\n\
+		   vec2 v1=mainSound(t*2.0/Zuni[1]),v2=mainSound((t*2.0+1.0)/Zuni[1]);\n\
+		   gl_FragColor=clamp(vec4(v1,v2),-1.0,1.0);}\n%s";
+		GLuint P_S, VS_S, FS_S;//create the program and shaders
+		sprintf(FSscript,fssh,sound);
+		if(createprogram(VSscript, FSscript, &P_S, &VS_S, &FS_S)){		
+			iDatSamps=width*height*4; //2 samples per pixel x 2 channels
+			snddat=(short *)malloc(iDatSamps*sizeof(short));
+			if(snddat){
+				float *dat=(float *)malloc(iDatSamps*sizeof(float));
+				if(dat){
+					glBindFramebuffer(GL_FRAMEBUFFER, fbo[1]); 
+					glUseProgram(P_S);
+					float u[2];u[0]=(float)width;u[1]=(float)rate;//sample rate
+					GLint zUniS=glGetUniformLocation(P_S,"Zuni");//get uniform location
+					glUniform1fv(zUniS,2,u);
+					glRects(-1,-1,1,1);
+					glReadPixels(0,0,width,height,GL_RGBA,GL_FLOAT,(void *)dat);
+					for(i=0;i<iDatSamps;i++){
+						float f=dat[i]*32766.0f;
+						snddat[i]=(short)(f+sgn(f)*0.5f);
+					}
+					free(dat);
+				}
+			}
+			glDetachShader(P_S,FS_S);glDeleteShader(FS_S);
+			glDetachShader(P_S,VS_S);glDeleteShader(VS_S);
+			glDeleteProgram(P_S);
+		}
+		if(snddat)pthread_create(&tid, NULL, &startSnd, NULL);
+	}
+#endif
+	free(FSscript);free(bufferA);free(image);free(sound);
  
 	//now the demo loop
 #define ARRAY_SIZE 16
 	BYTE bytKeys[256];for(i=0;i<256;i++)bytKeys[i]=0;
 	int iMouse=0,iFrame=0;
-	Bool bQuit=False,bKeys=True;
+	Bool bKeys=True;
 	int lastX=0,lastY=0,iBuf=0;
 	const int ZERO=0,ONE=1;
 	float u[ARRAY_SIZE]; for(i=0;i<ARRAY_SIZE;i++)u[i]=0.0;
@@ -435,7 +542,9 @@ printf("Actual size %i, %i\n",width, height);
         XF86VidModeSetViewPort(dpy, screen, 0, 0);
     }
     XCloseDisplay(dpy);
+#ifdef ADD_SOUND
+	if(snddat)pthread_join(tid,NULL);
+#endif
 	return 0;
 }
-
 

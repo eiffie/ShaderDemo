@@ -227,7 +227,89 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
         vec2 IR=vec2(dot(refl,N),dot(refr,-N));
         IR=(IR-1.5*IR.yx)/(IR+1.5*IR.yx);
         float fres=dot(IR,IR)/2.0;
-        col+=8.0*col*mytextureCube(reflect(rd,N)).rgb*fres;
+        col+=8.0*col*mytextureCube(refl).rgb*fres;
 	}
 	fragColor=vec4(col,0.0);
+}
+[sound]
+#define PI 3.14159
+#define bps 6.0
+float nofs(float n){//the song's "random" ring
+    n=mod(n,8.0);
+    if(n<1.0)return 0.0;
+    if(n<2.0)return 1.0;
+    if(n<3.0)return 2.0;
+    if(n<4.0)return 3.0;
+    if(n<5.0)return 5.0;
+    if(n<6.0)return 4.0;
+    if(n<7.0)return 3.0;
+    return 0.0;
+}
+
+float scale(float note){//throws out dissonant tones
+	float n2=mod(note,12.0);
+	//if((n2==1.0)||(n2==3.0)||(n2==6.0)||(n2==8.0)||(n2==10.0))note=-100.0;//major
+	if((n2==1.0)||(n2==4.0)||(n2==6.0)||(n2==9.0)||(n2==11.0))note=-100.0;//minor
+	//if((n2==1.0)||(n2==4.0)||(n2==5.0)||(n2==9.0)||(n2==10.0))note=-100.0;//hungarian minor
+	//if(note>96)note=96.0+n2;
+	return note;
+}
+float ntof(float note){//note frequencies from wikipedia
+	if(note<12.0)return 0.0;
+	float octave=floor((note+0.5)/12.0)-5.0;
+	note=mod(note,12.0);
+	float nt=493.88;//b
+ 	if(note<0.5)nt=261.63;//c
+	else if(note<1.5)nt=277.18;//c#
+	else if(note<2.5)nt=293.66;//d
+  else if(note<3.5)nt=311.13;//d#
+  else if(note<4.5)nt=329.63;//e
+  else if(note<5.5)nt=349.23;//f
+  else if(note<6.5)nt=369.99;//f#
+  else if(note<7.5)nt=392.0;//g
+  else if(note<8.5)nt=415.30;//g#
+  else if(note<9.5)nt=440.0;//a
+  else if(note<10.5)nt=466.16;//a#
+	return nt*exp2(octave);
+}
+
+float Saw(float t,float s){s*=0.5;return smoothstep(0.0,s,fract(t))*smoothstep(1.0,s,fract(t))*2.0-1.0;}
+float Sin(float t){return sin(t*PI);}
+float Square(float t,float s){s*=0.25;return smoothstep(0.25-s,0.25+s,fract(t))*smoothstep(0.75+s,0.75-s,fract(t))*2.0-1.0;}
+float Env(float t,float s){s*=0.5;return smoothstep(0.0,s,t)*smoothstep(1.0,s,t);}
+float Env(float t,float s,float e){return smoothstep(0.0,s,t)*smoothstep(e,s,t);}
+float rand(float t){return fract(sin(mod(t,4321.123)*4321.123)*4321.123);}
+float noise(float t){float f=fract(t);t=floor(t);return mix(rand(t),rand(t+1.0),f);}
+float snoise(float t){float f=fract(t);t=floor(t);return mix(rand(t),rand(t+1.0),f*f*(3.0-2.0*f));}
+
+float tamb(float t, float o, float n){
+	float bt=fract(fract(t-o)*1.5);
+	float f=t*3500.0+bt*75.0*n-noise(bt*75.0*(1.0-0.9*bt))*7.0;
+	float a2=Square(f,bt);
+	return a2*Env(bt*(2.0+2.0*n),0.01)*Sin(1.0/(0.02+2.0*bt*bt));
+}
+float flute(float bt,float t,float f){
+	if(f<12.0)return 0.0;
+	float e=Env(bt,0.1,0.5),m=(1.0-e)*sin(t*40.0)*0.08;
+	return Env(bt,0.4)*(snoise(t*1000.0)*e*0.15+m+0.5)*Square(t*f+m,0.3+bt*0.5);
+}
+float strings(float bt,float t,float f){
+	if(f<12.0)return 0.0;
+	float e=Env(bt,0.1,0.5),m=(1.0-e)*sin(t*50.0)*0.0001*f;
+	return Env(bt,0.5)*(m+0.5)*Saw(t*f+m,0.1+bt*0.9);
+}
+vec2 mainSound(float time){
+	float tim=time*bps;
+	float b=floor(tim);
+	float n0=nofs(b*0.0625),n1=n0+nofs(b*0.25),n2=n1+nofs(b);
+	float bt=fract(tim);
+	n0=scale(n0+32.0);if(n0<1.0)n0=scale(nofs(b*0.0625)+33.0);//keep base going
+	float a=strings(fract(tim*0.25),time,ntof(n0))*2.0;
+	a+=strings(fract(tim*0.5),time,ntof(scale(n1+72.0)))*0.3;
+	a+=strings(fract(tim*0.5),time,ntof(scale(n1+75.0)))*0.1;
+	a+=strings(fract(tim*0.5),time,ntof(scale(n1+79.0)))*0.2;
+	a+=flute(fract(tim),time,ntof(scale(n2+60.0)));
+	a+=tamb(time*3.0,0.1,rand(floor(mod(time,180.0))))*0.2;
+	a=clamp(a*0.25,-1.0,1.0);
+	return vec2(a);
 }
